@@ -1,4 +1,4 @@
-from utils.neuronpilot.data import convert_to_binary, conert_to_numpy
+from utils.neuronpilot.data import convert_to_binary, convert_to_numpy
 from utils.neuronpilot import neuronrt
 import argparse, time, warnings, shutil, os
 import numpy as np
