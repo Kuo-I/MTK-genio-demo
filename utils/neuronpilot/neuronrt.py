@@ -1,4 +1,4 @@
-from utils.neuronpilot.data import convert_to_binary, conert_to_numpy
+from utils.neuronpilot.data import convert_to_binary, convert_to_numpy
 from utils.tools import Neuronpilot_WebAPI, tflite_to_dla
 import numpy as np
 import tensorflow as tf
