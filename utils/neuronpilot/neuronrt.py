@@ -1,4 +1,4 @@
-from utils.neuronpilot.data import convert_to_binary, convert_to_numpy
+from utils.neuronpilot.data import convert_to_binary, conert_to_numpy
 from utils.tools import Neuronpilot_WebAPI, tflite_to_dla
 import numpy as np
 import tensorflow as tf
@@ -51,7 +51,7 @@ class Interpreter():
         )
         
     def get_tensor(self, _):
-        return convert_to_numpy(self.output_handlers_with_shape, dtype = np.float32)[0]
+        return conert_to_numpy(self.output_handlers_with_shape, dtype = np.float32)[0]
 
 
 def load(compiled_dla_model):
