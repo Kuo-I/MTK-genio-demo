@@ -12,7 +12,7 @@ parser.add_argument("-d", "--device", type=str, default='mdla3.0', choices = ['m
 parser.add_argument("-t", "--iteration", default=10, type=int, help="Test How Many Times?")
 args = parser.parse_args()
 
-interpreter = neuronrt.Interpreter(model_path=args.tflite_model, device = )
+interpreter = neuronrt.Interpreter(model_path=args.tflite_model, device = args.device)
 interpreter.allocate_tensors()
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
