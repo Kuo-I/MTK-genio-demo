@@ -51,7 +51,7 @@ class Interpreter():
         )
         
     def get_tensor(self, _):
-        return conert_to_numpy(self.output_handlers_with_shape, dtype = np.float32)[0]
+        return convert_to_numpy(self.output_handlers_with_shape, dtype = np.float32)[0]
 
 
 def load(compiled_dla_model):
