@@ -8,7 +8,7 @@ import tensorflow as tf
 import sys
 
 # 假設 neuronrt module 路徑正確且在 PYTHONPATH
-from utils.neuronpilot.data import convert_to_binary, convert_to_numpy  # 修正拼字
+from utils.neuronpilot.data import conert_to_binary, conert_to_numpy  # 修正拼字
 
 # NeuronRT import deferred for clearer error message
 warnings.simplefilter("ignore")
