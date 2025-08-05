@@ -6,11 +6,25 @@ import numpy as np
 from ultralytics import YOLO
 
 # --- Configuration / Backend selection ---
-# Set backend via environment variable: "armnn", "neuronrt", or leave unset for default TFLite/EdgeTPU
+# Set backend via environment variable: "armnn", "neuronrt", or leave unset for
+# default TFLite/EdgeTPU
+# Examples:
+#   export YOLO_BACKEND=armnn
+#   export YOLO_BACKEND=neuronrt
+#   (leave unset for default TFLite)
 backend_choice = os.getenv("YOLO_BACKEND")  # e.g., export YOLO_BACKEND=armnn
 # Optionally set specific devices if needed via env too
-neuron_device = os.getenv("YOLO_NEURON_DEVICE", "mdla3.0")  # used if neuronrt backend
-armnn_backend = os.getenv("YOLO_ARMNN_BACKEND", "GpuAcc")  # used if armnn backend
+neuron_device = os.getenv("YOLO_NEURON_DEVICE", "mdla3.0")  # neuronrt backend
+armnn_backend = os.getenv("YOLO_ARMNN_BACKEND", "GpuAcc")  # armnn backend
+
+# Print current configuration
+print("[INFO] Backend configuration:")
+print(f"  YOLO_BACKEND: {backend_choice or 'default (TFLite)'}")
+if backend_choice == "neuronrt":
+    print(f"  YOLO_NEURON_DEVICE: {neuron_device}")
+elif backend_choice == "armnn":
+    print(f"  YOLO_ARMNN_BACKEND: {armnn_backend}")
+print()
 
 # --- Async pipeline ---
 async def preprocess(input_queue, cap):

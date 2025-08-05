@@ -465,22 +465,37 @@ class AutoBackend(nn.Module):
                 LOGGER.info(f"Loading {w} for TensorFlow Lite inference...")
                 # interpreter = Interpreter(model_path=w)  # load TFLite model
                 
-                # Use ArmNN delegate
-                armnn_delegate = load_delegate(
-                    library=("/home/ubuntu/armnn/ArmNN-linux-aarch64/"
-                             "libarmnnDelegate.so"),
-                    options={"backends": 'GpuAcc', "logging-severity": "info"}
-                )
-                interpreter = Interpreter(
-                    model_path=w,
-                    experimental_delegates=[armnn_delegate]
-                )
+                # Check for backend selection via environment variable
+                import os
+                backend_choice = os.getenv("YOLO_BACKEND")
                 
-                # Alternatively, use NeuronRT (uncomment the following lines
-                # to use NeuronRT instead)
-                # from utils.neuronpilot import runtime
-                # interpreter = runtime.Interpreter(model_path=w,
-                #                                  device='mdla3.0')
+                if backend_choice == "armnn":
+                    # Use ArmNN delegate
+                    armnn_backend = os.getenv("YOLO_ARMNN_BACKEND", "GpuAcc")
+                    armnn_delegate = load_delegate(
+                        library=("/home/ubuntu/armnn/ArmNN-linux-aarch64/"
+                                 "libarmnnDelegate.so"),
+                        options={"backends": armnn_backend,
+                                 "logging-severity": "info"}
+                    )
+                    interpreter = Interpreter(
+                        model_path=w,
+                        experimental_delegates=[armnn_delegate]
+                    )
+                    LOGGER.info(f"Using ArmNN delegate with "
+                                f"{armnn_backend} backend")
+                elif backend_choice == "neuronrt":
+                    # Use NeuronRT
+                    from utils.neuronpilot import runtime
+                    neuron_device = os.getenv("YOLO_NEURON_DEVICE", "mdla3.0")
+                    interpreter = runtime.Interpreter(
+                        model_path=w,
+                        device=neuron_device)
+                    LOGGER.info(f"Using NeuronRT with device {neuron_device}")
+                else:
+                    # Default TFLite interpreter
+                    interpreter = Interpreter(model_path=w)
+                    LOGGER.info("Using default TensorFlow Lite interpreter")
                 
             interpreter.allocate_tensors()  # allocate
             input_details = interpreter.get_input_details()  # inputs
