@@ -478,33 +478,15 @@ class AutoBackend(nn.Module):
                             library=("/home/ubuntu/armnn/ArmNN-linux-aarch64/"
                                      "libarmnnDelegate.so"),
                             options={"backends": armnn_backend,
-                                     "logging-severity": "info"}
+                                     "logging-severity": "info"},
                         )
                         interpreter = Interpreter(
                             model_path=w,
-                            experimental_delegates=[armnn_delegate]
-                        )
-                        LOGGER.info(f"Using ArmNN delegate with "
-                                    f"{armnn_backend} backend")
+                            experimental_delegates=[armnn_delegate])
+                        LOGGER.info(f"Using ArmNN delegate ({armnn_backend})")
                     except Exception as e:
-                        LOGGER.warning(f"ArmNN delegate failed: {e}, "
-                                       f"trying NeuronRT...")
-                        # Fallback to NeuronRT
-                        try:
-                            from utils.neuronpilot import runtime
-                            neuron_device = os.getenv("YOLO_NEURON_DEVICE", 
-                                                      "mdla3.0")
-                            interpreter = runtime.Interpreter(
-                                model_path=w,
-                                device=neuron_device)
-                            LOGGER.info(f"Using NeuronRT with device "
-                                        f"{neuron_device}")
-                        except Exception as e2:
-                            LOGGER.warning(f"NeuronRT also failed: {e2}, "
-                                           f"using default TFLite")
-                            interpreter = Interpreter(model_path=w)
-                            LOGGER.info("Using default TensorFlow Lite "
-                                        "interpreter")
+                        LOGGER.warning(f"ArmNN delegate load failed → {e}")
+                        interpreter = Interpreter(model_path=w)  # fallback CPU
                 elif backend_choice == "neuronrt":
                     # Use NeuronRT directly
                     try:
