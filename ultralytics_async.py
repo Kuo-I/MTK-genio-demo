@@ -119,7 +119,7 @@ async def postprocess(output_queue: asyncio.Queue) -> None:
 
 async def main(
     source: str = "./data/serve.mp4",
-    weights: str = "yolov8n.tflite",
+    weights: str = "./models/yolov8n_float32.tflite",
     conf: float = 0.3,
     imgsz: int = 640,
 ) -> None:
