@@ -1,83 +1,74 @@
-'''
-ultralytics_async.py (GPUAcc Default)
-====================================
-Asynchronous video inference pipeline for Ultralytics YOLO **with ArmNN ‑ GpuAcc 作為預設後端**。
+''''
+ultralytics_async.py (ArmNN‑GpuAcc default, selectable)
+=====================================================
+非同步影片推論範例，預設使用 **ArmNN + GpuAcc**；
+但只要在執行前覆蓋 `YOLO_BACKEND` 即可切換至 **CpuAcc**、**NeuronRT**（MDLA 3.0）或其它自訂後端。
 
-* 若使用者「沒有」設定任何環境變數，程式會自動：
-  - `YOLO_BACKEND = "armnn"`
-  - `YOLO_ARMNN_BACKEND = "GpuAcc"`
-* 如需改成 CpuAcc 或 NeuronRT，只要在 `import YOLO` 之前覆寫相同環境變數即可。
+* 無任何環境變數時：
+  ```
+  YOLO_BACKEND        = armnn
+  YOLO_ARMNN_BACKEND  = GpuAcc
+  YOLO_NEURON_DEVICE  = mdla3.0  (僅 neuronrt 分支會用)
+  ```
+* 例如改跑 MDLA：
+  ```bash
+  YOLO_BACKEND=neuronrt python3 ultralytics_async.py
+  ```
 '''
 
 import os
 import time
 import asyncio
-from typing import Optional, Tuple
-
 import cv2
 import numpy as np
 from ultralytics import YOLO
 
 # -----------------------------------------------------------------------------
-# 全域環境變數：強制預設 ArmNN + GpuAcc
+# ❶ 預設環境變數（可被外部覆寫）
 # -----------------------------------------------------------------------------
-# setdefault 只在外部沒預先 export 時才生效
-os.environ.setdefault("YOLO_BACKEND", "armnn")
-os.environ.setdefault("YOLO_ARMNN_BACKEND", "GpuAcc")
+os.environ.setdefault("YOLO_BACKEND", "armnn")          # armnn / neuronrt / cpu / edgetpu ...
+os.environ.setdefault("YOLO_ARMNN_BACKEND", "GpuAcc")   # GpuAcc / CpuAcc
+os.environ.setdefault("YOLO_NEURON_DEVICE", "mdla3.0")   # mdla3.0 / vpu0  (NeuronRT 專用)
 
-# 讀取最終環境值（可能被使用者覆寫）
-backend_choice  = os.getenv("YOLO_BACKEND").lower()
-armnn_backend   = os.getenv("YOLO_ARMNN_BACKEND")
-neuron_device   = os.getenv("YOLO_NEURON_DEVICE", "mdla3.0")
-
-print(
-    f"[Backend] YOLO_BACKEND={backend_choice} | "
-    f"YOLO_ARMNN_BACKEND={armnn_backend} | "
-    f"YOLO_NEURON_DEVICE={neuron_device}"
-)
+# ❷ 讀最終值並顯示
+backend_choice = os.getenv("YOLO_BACKEND").lower()
+armnn_backend  = os.getenv("YOLO_ARMNN_BACKEND")
+neuron_device  = os.getenv("YOLO_NEURON_DEVICE")
+# ---- 最終後端訊息 ----
+if backend_choice == "neuronrt":
+    print(f"[Backend] YOLO_BACKEND=neuronrt | YOLO_NEURON_DEVICE={neuron_device}")
+else:
+    print(f"[Backend] YOLO_BACKEND={backend_choice} | YOLO_ARMNN_BACKEND={armnn_backend}")
 
 # -----------------------------------------------------------------------------
-# Async pipeline helpers
+# Async helpers
 # -----------------------------------------------------------------------------
-
-async def preprocess(input_q: asyncio.Queue, cap: cv2.VideoCapture) -> None:
-    """Capture frames and push with timestamp."""
+async def preprocess(q_in: asyncio.Queue, cap: cv2.VideoCapture):
     loop = asyncio.get_running_loop()
     while cap.isOpened():
         ret, frame = await loop.run_in_executor(None, cap.read)
         if not ret:
-            await input_q.put(None)
-            break
-        await input_q.put((frame, time.time()))
-    cap.release()
-    await input_q.put(None)
+            await q_in.put(None); break
+        await q_in.put((frame, time.time()))
+    cap.release(); await q_in.put(None)
 
-async def predict(
-    input_q: asyncio.Queue,
-    output_q: asyncio.Queue,
-    model: YOLO,
-    conf: float = 0.3,
-    imgsz: int = 640,
-) -> None:
-    """Run inference in executor thread."""
+async def predict(q_in: asyncio.Queue, q_out: asyncio.Queue, model: YOLO, conf=0.3, imgsz=640):
     loop = asyncio.get_running_loop()
     while True:
-        item = await input_q.get()
+        item = await q_in.get()
         if item is None:
-            await output_q.put(None)
-            break
+            await q_out.put(None); break
         frame, ts = item
-        result = await loop.run_in_executor(
+        plotted = await loop.run_in_executor(
             None,
             lambda: model.predict(frame, conf=conf, imgsz=imgsz, stream=False)[0].plot(),
         )
-        await output_q.put((result, ts))
+        await q_out.put((plotted, ts))
 
-async def postprocess(output_q: asyncio.Queue) -> None:
-    """Display frames + stats."""
-    t0 = time.time(); n = 0
+async def postprocess(q_out: asyncio.Queue):
+    n, t0 = 0, time.time()
     while True:
-        item = await output_q.get()
+        item = await q_out.get()
         if item is None:
             break
         frame, ts = item
@@ -91,38 +82,27 @@ async def postprocess(output_q: asyncio.Queue) -> None:
     cv2.destroyAllWindows()
 
 # -----------------------------------------------------------------------------
-# Main pipeline
+# Main
 # -----------------------------------------------------------------------------
-
-async def main(
-    source: str = "./data/serve.mp4",
-    weights: str = "./models/yolov8n_float32.tflite",
-    conf: float = 0.3,
-    imgsz: int = 640,
-) -> None:
-    """Launch end‑to‑end async pipeline."""
+async def main(source="./data/serve.mp4", weights="./models/yolov8n_float32.tflite", conf=0.3, imgsz=640):
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
-        raise FileNotFoundError(f"Unable to open video source: {source}")
+        raise FileNotFoundError(f"Unable to open {source}")
 
-    input_q: asyncio.Queue  = asyncio.Queue(maxsize=4)
-    output_q: asyncio.Queue = asyncio.Queue(maxsize=4)
+    q_in, q_out = asyncio.Queue(4), asyncio.Queue(4)
+    model = YOLO(weights)   # AutoBackend 依環境變數載入 delegate
 
-    model = YOLO(weights)  # AutoBackend 會依環境變數載入 ArmNN GpuAcc
-
-    # Warm‑up (1 dummy frame)
     try:
-        _ = model.predict(np.zeros((imgsz, imgsz, 3), dtype=np.uint8), verbose=False)
+        model.predict(np.zeros((imgsz, imgsz, 3), dtype=np.uint8), verbose=False)
         print("[INFO] Warm‑up done")
     except Exception as e:
         print(f"[WARN] Warm‑up failed: {e}")
 
-    tasks = [
-        preprocess(input_q, cap),
-        predict(input_q, output_q, model, conf=conf, imgsz=imgsz),
-        postprocess(output_q),
-    ]
-    await asyncio.gather(*tasks)
+    await asyncio.gather(
+        preprocess(q_in, cap),
+        predict(q_in, q_out, model, conf, imgsz),
+        postprocess(q_out),
+    )
 
 if __name__ == "__main__":
     try:
