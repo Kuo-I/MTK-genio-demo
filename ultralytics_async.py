@@ -20,7 +20,7 @@ from typing import Optional, Tuple
 
 import cv2
 import numpy as np
-from ultralytics import YOLO, LOGGER
+from ultralytics import YOLO
 
 # -----------------------------------------------------------------------------
 # Backend selection (ArmNN by default)
@@ -33,8 +33,10 @@ backend_choice = os.getenv("YOLO_BACKEND", "armnn").lower()
 neuron_device = os.getenv("YOLO_NEURON_DEVICE", "mdla3.0")
 armnn_backend = os.getenv("YOLO_ARMNN_BACKEND", "GpuAcc")
 
-LOGGER.info(
-    f"[Backend] YOLO_BACKEND={backend_choice} | YOLO_NEURON_DEVICE={neuron_device} | YOLO_ARMNN_BACKEND={armnn_backend}"
+print(
+    f"[Backend] YOLO_BACKEND={backend_choice} | "
+    f"YOLO_NEURON_DEVICE={neuron_device} | "
+    f"YOLO_ARMNN_BACKEND={armnn_backend}"
 )
 
 # -----------------------------------------------------------------------------
@@ -148,4 +150,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        LOGGER.info("Interrupted by user.")
+        print("Interrupted by user.")
