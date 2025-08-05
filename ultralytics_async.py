@@ -135,7 +135,14 @@ async def main(
 
     # Load model (AutoBackend will pick ArmNN delegate by default)
     model = YOLO(weights)
-    model.warmup(imgsz=(1, 3, imgsz, imgsz))
+    
+    # Warmup with a dummy prediction
+    try:
+        dummy_frame = np.zeros((imgsz, imgsz, 3), dtype=np.uint8)
+        _ = model.predict(dummy_frame, verbose=False)
+        print("[INFO] Model warmup completed")
+    except Exception as e:
+        print(f"[WARN] Warmup failed: {e}")
 
     # Gather tasks
     tasks = [
