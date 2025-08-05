@@ -463,35 +463,57 @@ class AutoBackend(nn.Module):
                 device = "cpu"  # Required, otherwise PyTorch will try to use the wrong device
             else:  # TFLite
                 LOGGER.info(f"Loading {w} for TensorFlow Lite inference...")
-                # interpreter = Interpreter(model_path=w)  # load TFLite model
-                
-                # Check for backend selection via environment variable
                 import os
-                backend_choice = os.getenv("YOLO_BACKEND")
-                
-                # Priority order: 1. ArmNN GPU, 2. NeuronRT, 3. Default TFLite
-                if backend_choice == "armnn" or backend_choice is None:
-                    # Use ArmNN delegate (default priority)
-                    try:
-                        armnn_backend = os.getenv("YOLO_ARMNN_BACKEND", "GpuAcc")
-                        armnn_delegate = load_delegate(
-                            library=("/home/ubuntu/armnn/ArmNN-linux-aarch64/"
-                                     "libarmnnDelegate.so"),
-                            options={"backends": armnn_backend,
-                                     "logging-severity": "info"},
-                        )
-                        interpreter = Interpreter(
-                            model_path=w,
-                            experimental_delegates=[armnn_delegate])
-                        LOGGER.info(f"Using ArmNN delegate ({armnn_backend})")
-                    except Exception as e:
-                        LOGGER.warning(f"ArmNN delegate load failed → {e}")
-                        interpreter = Interpreter(model_path=w)  # fallback CPU
+                backend_choice = os.getenv("YOLO_BACKEND", "").lower()
+
+                if backend_choice in ("armnn", ""):
+                    # 1. 决定 delegate.so 路径
+                    armnn_lib = os.getenv("YOLO_ARMNN_LIB")
+                    if not armnn_lib or not os.path.isfile(armnn_lib):
+                        # 默认先查 /usr/lib，再查旧路径
+                        candidates = [
+                            "/usr/lib/libarmnnDelegate.so",
+                            ("/home/ubuntu/armnn/ArmNN-linux-aarch64/"
+                             "libarmnnDelegate.so")
+                        ]
+                        for p in candidates:
+                            if os.path.isfile(p):
+                                armnn_lib = p
+                                break
+
+                    if not armnn_lib or not os.path.isfile(armnn_lib):
+                        LOGGER.warning("⚠️ 找不到 ArmNN Delegate (.so)，跳过 ArmNN 加载")
+                        interpreter = Interpreter(model_path=w)
+                    else:
+                        try:
+                            armnn_backend = os.getenv("YOLO_ARMNN_BACKEND",
+                                                     "GpuAcc")
+                            LOGGER.info(f"🔍 尝试加载 ArmNN Delegate: {armnn_lib} "
+                                       f"(backend={armnn_backend})")
+                            armnn_delegate = load_delegate(
+                                library=armnn_lib,
+                                options={"backends": armnn_backend,
+                                        "logging-severity": "info"}
+                            )
+                            interpreter = Interpreter(
+                                model_path=w,
+                                experimental_delegates=[armnn_delegate]
+                            )
+                            LOGGER.info(f"✅ 使用 ArmNN delegate "
+                                       f"({armnn_backend})")
+                        except Exception:
+                            LOGGER.error(
+                                f"❌ ArmNN delegate 加载失败: {armnn_lib}",
+                                exc_info=True
+                            )
+                            # fallback CPU
+                            interpreter = Interpreter(model_path=w)
+
                 elif backend_choice == "neuronrt":
                     # Use NeuronRT directly
                     try:
                         from utils.neuronpilot import runtime
-                        neuron_device = os.getenv("YOLO_NEURON_DEVICE", 
+                        neuron_device = os.getenv("YOLO_NEURON_DEVICE",
                                                   "mdla3.0")
                         interpreter = runtime.Interpreter(
                             model_path=w,
@@ -505,9 +527,8 @@ class AutoBackend(nn.Module):
                         LOGGER.info("Using default TensorFlow Lite "
                                     "interpreter")
                 else:
-                    # Default TFLite interpreter
                     interpreter = Interpreter(model_path=w)
-                    LOGGER.info("Using default TensorFlow Lite interpreter")
+                    LOGGER.info("使用默认 TensorFlow Lite interpreter")
                 
             interpreter.allocate_tensors()  # allocate
             input_details = interpreter.get_input_details()  # inputs
