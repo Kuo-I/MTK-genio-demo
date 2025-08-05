@@ -469,29 +469,59 @@ class AutoBackend(nn.Module):
                 import os
                 backend_choice = os.getenv("YOLO_BACKEND")
                 
-                if backend_choice == "armnn":
-                    # Use ArmNN delegate
-                    armnn_backend = os.getenv("YOLO_ARMNN_BACKEND", "GpuAcc")
-                    armnn_delegate = load_delegate(
-                        library=("/home/ubuntu/armnn/ArmNN-linux-aarch64/"
-                                 "libarmnnDelegate.so"),
-                        options={"backends": armnn_backend,
-                                 "logging-severity": "info"}
-                    )
-                    interpreter = Interpreter(
-                        model_path=w,
-                        experimental_delegates=[armnn_delegate]
-                    )
-                    LOGGER.info(f"Using ArmNN delegate with "
-                                f"{armnn_backend} backend")
+                # Priority order: 1. ArmNN GPU, 2. NeuronRT, 3. Default TFLite
+                if backend_choice == "armnn" or backend_choice is None:
+                    # Use ArmNN delegate (default priority)
+                    try:
+                        armnn_backend = os.getenv("YOLO_ARMNN_BACKEND", "GpuAcc")
+                        armnn_delegate = load_delegate(
+                            library=("/home/ubuntu/armnn/ArmNN-linux-aarch64/"
+                                     "libarmnnDelegate.so"),
+                            options={"backends": armnn_backend,
+                                     "logging-severity": "info"}
+                        )
+                        interpreter = Interpreter(
+                            model_path=w,
+                            experimental_delegates=[armnn_delegate]
+                        )
+                        LOGGER.info(f"Using ArmNN delegate with "
+                                    f"{armnn_backend} backend")
+                    except Exception as e:
+                        LOGGER.warning(f"ArmNN delegate failed: {e}, "
+                                       f"trying NeuronRT...")
+                        # Fallback to NeuronRT
+                        try:
+                            from utils.neuronpilot import runtime
+                            neuron_device = os.getenv("YOLO_NEURON_DEVICE", 
+                                                      "mdla3.0")
+                            interpreter = runtime.Interpreter(
+                                model_path=w,
+                                device=neuron_device)
+                            LOGGER.info(f"Using NeuronRT with device "
+                                        f"{neuron_device}")
+                        except Exception as e2:
+                            LOGGER.warning(f"NeuronRT also failed: {e2}, "
+                                           f"using default TFLite")
+                            interpreter = Interpreter(model_path=w)
+                            LOGGER.info("Using default TensorFlow Lite "
+                                        "interpreter")
                 elif backend_choice == "neuronrt":
-                    # Use NeuronRT
-                    from utils.neuronpilot import runtime
-                    neuron_device = os.getenv("YOLO_NEURON_DEVICE", "mdla3.0")
-                    interpreter = runtime.Interpreter(
-                        model_path=w,
-                        device=neuron_device)
-                    LOGGER.info(f"Using NeuronRT with device {neuron_device}")
+                    # Use NeuronRT directly
+                    try:
+                        from utils.neuronpilot import runtime
+                        neuron_device = os.getenv("YOLO_NEURON_DEVICE", 
+                                                  "mdla3.0")
+                        interpreter = runtime.Interpreter(
+                            model_path=w,
+                            device=neuron_device)
+                        LOGGER.info(f"Using NeuronRT with device "
+                                    f"{neuron_device}")
+                    except Exception as e:
+                        LOGGER.warning(f"NeuronRT failed: {e}, "
+                                       f"using default TFLite")
+                        interpreter = Interpreter(model_path=w)
+                        LOGGER.info("Using default TensorFlow Lite "
+                                    "interpreter")
                 else:
                     # Default TFLite interpreter
                     interpreter = Interpreter(model_path=w)
