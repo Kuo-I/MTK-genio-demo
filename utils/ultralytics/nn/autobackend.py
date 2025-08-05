@@ -8,7 +8,6 @@ from collections import OrderedDict, namedtuple
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import os
 import cv2
 import numpy as np
 import torch
@@ -444,63 +443,48 @@ class AutoBackend(nn.Module):
 
         # TFLite or TFLite Edge TPU
         elif tflite or edgetpu:  # https://ai.google.dev/edge/litert/microcontrollers/python
-            try:  # delegate import fallback
+            try:  # https://coral.ai/docs/edgetpu/tflite-python/#update-existing-tf-lite-code-for-the-edge-tpu
                 from tflite_runtime.interpreter import Interpreter, load_delegate
             except ImportError:
                 import tensorflow as tf
 
                 Interpreter, load_delegate = tf.lite.Interpreter, tf.lite.experimental.load_delegate
-
-    # Decide backend: neuronrt / armnn / default
-            if backend_choice == "neuronrt":
-                try:
-                    from utils.neuronpilot import runtime as neuronrt_runtime  # adjust if your module uses different name
-             except ImportError:
-                    from utils.neuronpilot import neuronrt as neuronrt_runtime  # fallback name
-                LOGGER.info(f"Loading {w} on NeuronRT device {device} for inference...")
-                interpreter = neuronrt_runtime.Interpreter(model_path=w, device=str(device))
-        elif backend_choice == "armnn":
-            LOGGER.info(f"Loading {w} with ArmNN delegate for TensorFlow Lite inference...")
-            armnn_delegate = load_delegate(
-                library="/home/ubuntu/armnn/ArmNN-linux-aarch64/libarmnnDelegate.so",
-                options={"backends": "GpuAcc", "logging-severity": "info"},
-            )
-            interpreter = Interpreter(model_path=w, experimental_delegates=[armnn_delegate])
-        else:  # original TFLite / EdgeTPU logic
-            if edgetpu:
+            
+            if edgetpu:  # TF Edge TPU https://coral.ai/software/#edgetpu-runtime
                 device = device[3:] if str(device).startswith("tpu") else ":0"
                 LOGGER.info(f"Loading {w} on device {device[1:]} for TensorFlow Lite Edge TPU inference...")
-                delegate = {
-                    "Linux": "libedgetpu.so.1",
-                    "Darwin": "libedgetpu.1.dylib",
-                    "Windows": "edgetpu.dll",
-                }[platform.system()]
+                delegate = {"Linux": "libedgetpu.so.1", "Darwin": "libedgetpu.1.dylib", "Windows": "edgetpu.dll"}[
+                    platform.system()
+                ]
                 interpreter = Interpreter(
                     model_path=w,
                     experimental_delegates=[load_delegate(delegate, options={"device": device})],
                 )
-            device = "cpu"  # Required, otherwise PyTorch will try to use the wrong device
+                device = "cpu"  # Required, otherwise PyTorch will try to use the wrong device
             else:  # TFLite
                 LOGGER.info(f"Loading {w} for TensorFlow Lite inference...")
-                interpreter = Interpreter(model_path=w)  # load TFLite model
-
-    # allocate / get details
-    interpreter.allocate_tensors()
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
-
-    # Load metadata
-    try:
-        with zipfile.ZipFile(w, "r") as zf:
-            name = zf.namelist()[0]
-            contents = zf.read(name).decode("utf-8")
-            if name == "metadata.json":  # Custom Ultralytics metadata dict for Python>=3.12
-                metadata = json.loads(contents)
-            else:
-                metadata = ast.literal_eval(contents)  # Default tflite-support metadata for Python<=3.11
-    except (zipfile.BadZipFile, SyntaxError, ValueError, json.JSONDecodeError):
-        pass
-
+                # interpreter = Interpreter(model_path=w)  # load TFLite model
+                
+                # Use ArmNN delegate
+                armnn_delegate = load_delegate(
+                    library=("/home/ubuntu/armnn/ArmNN-linux-aarch64/"
+                             "libarmnnDelegate.so"),
+                    options={"backends": 'GpuAcc', "logging-severity": "info"}
+                )
+                interpreter = Interpreter(
+                    model_path=w,
+                    experimental_delegates=[armnn_delegate]
+                )
+                
+                # Alternatively, use NeuronRT (uncomment the following lines
+                # to use NeuronRT instead)
+                # from utils.neuronpilot import runtime
+                # interpreter = runtime.Interpreter(model_path=w,
+                #                                  device='mdla3.0')
+                
+            interpreter.allocate_tensors()  # allocate
+            input_details = interpreter.get_input_details()  # inputs
+            output_details = interpreter.get_output_details()  # outputs
             
             # Load metadata
             try:
