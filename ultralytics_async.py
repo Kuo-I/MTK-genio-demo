@@ -6,24 +6,26 @@ import numpy as np
 from ultralytics import YOLO
 
 # --- Configuration / Backend selection ---
-# Set backend via environment variable: "armnn", "neuronrt", or leave unset for
-# default TFLite/EdgeTPU
+# Default to ArmNN backend, can be overridden by environment variable
 # Examples:
-#   export YOLO_BACKEND=armnn
-#   export YOLO_BACKEND=neuronrt
-#   (leave unset for default TFLite)
-backend_choice = os.getenv("YOLO_BACKEND")  # e.g., export YOLO_BACKEND=armnn
+#   export YOLO_BACKEND=neuronrt  # to use NeuronRT instead
+#   export YOLO_BACKEND=default  # to use default TFLite
+#   (leave unset for ArmNN)
+backend_choice = os.getenv("YOLO_BACKEND", "armnn")  # default to ArmNN
 # Optionally set specific devices if needed via env too
 neuron_device = os.getenv("YOLO_NEURON_DEVICE", "mdla3.0")  # neuronrt backend
 armnn_backend = os.getenv("YOLO_ARMNN_BACKEND", "GpuAcc")  # armnn backend
 
 # Print current configuration
 print("[INFO] Backend configuration:")
-print(f"  YOLO_BACKEND: {backend_choice or 'default (TFLite)'}")
-if backend_choice == "neuronrt":
-    print(f"  YOLO_NEURON_DEVICE: {neuron_device}")
-elif backend_choice == "armnn":
+if backend_choice == "armnn":
+    print(f"  YOLO_BACKEND: {backend_choice} (default)")
     print(f"  YOLO_ARMNN_BACKEND: {armnn_backend}")
+elif backend_choice == "neuronrt":
+    print(f"  YOLO_BACKEND: {backend_choice}")
+    print(f"  YOLO_NEURON_DEVICE: {neuron_device}")
+else:
+    print(f"  YOLO_BACKEND: {backend_choice}")
 print()
 
 # --- Async pipeline ---
