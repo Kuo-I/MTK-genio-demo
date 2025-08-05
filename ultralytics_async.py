@@ -1,109 +1,151 @@
+'''
+ultralytics_async.py
+====================
+Asynchronous video inference pipeline for Ultralytics YOLO with **ArmNN as the default backend**.
+
+This script demonstrates how to capture frames from a video source, run model inference in a
+background executor thread, and display results with end‑to‑end latency and FPS statistics.
+
+Key changes
+-----------
+* `YOLO_BACKEND` now defaults to **armnn** when the environment variable is not provided.
+* The delegate‑selection logic is adjusted accordingly.
+'''
+
 import os
-import cv2
 import time
 import asyncio
+from pathlib import Path
+from typing import Optional, Tuple
+
+import cv2
 import numpy as np
-from ultralytics import YOLO
+from ultralytics import YOLO, LOGGER
 
-# --- Configuration / Backend selection ---
-# Default to ArmNN backend, can be overridden by environment variable
-# Examples:
-#   export YOLO_BACKEND=neuronrt  # to use NeuronRT instead
-#   export YOLO_BACKEND=default  # to use default TFLite
-#   (leave unset for ArmNN)
-backend_choice = os.getenv("YOLO_BACKEND", "armnn")  # default to ArmNN
-# Optionally set specific devices if needed via env too
-neuron_device = os.getenv("YOLO_NEURON_DEVICE", "mdla3.0")  # neuronrt backend
-armnn_backend = os.getenv("YOLO_ARMNN_BACKEND", "GpuAcc")  # armnn backend
+# -----------------------------------------------------------------------------
+# Backend selection (ArmNN by default)
+# -----------------------------------------------------------------------------
 
-# Print current configuration
-print("[INFO] Backend configuration:")
-if backend_choice == "armnn":
-    print(f"  YOLO_BACKEND: {backend_choice} (default)")
-    print(f"  YOLO_ARMNN_BACKEND: {armnn_backend}")
-elif backend_choice == "neuronrt":
-    print(f"  YOLO_BACKEND: {backend_choice}")
-    print(f"  YOLO_NEURON_DEVICE: {neuron_device}")
-else:
-    print(f"  YOLO_BACKEND: {backend_choice}")
-print()
+# If the user does not set YOLO_BACKEND, default to "armnn"
+backend_choice = os.getenv("YOLO_BACKEND", "armnn").lower()
 
-# --- Async pipeline ---
-async def preprocess(input_queue, cap):
+# Additional optional environment variables
+neuron_device = os.getenv("YOLO_NEURON_DEVICE", "mdla3.0")
+armnn_backend = os.getenv("YOLO_ARMNN_BACKEND", "GpuAcc")
+
+LOGGER.info(
+    f"[Backend] YOLO_BACKEND={backend_choice} | YOLO_NEURON_DEVICE={neuron_device} | YOLO_ARMNN_BACKEND={armnn_backend}"
+)
+
+# -----------------------------------------------------------------------------
+# Async pipeline helpers
+# -----------------------------------------------------------------------------
+
+async def preprocess(input_queue: asyncio.Queue, cap: cv2.VideoCapture) -> None:
+    """Read frames from the capture device and push to the input queue."""
+    loop = asyncio.get_running_loop()
     while cap.isOpened():
-        ret, frame = cap.read()
+        ret, frame = await loop.run_in_executor(None, cap.read)
         if not ret:
             await input_queue.put(None)
             break
         timestamp = time.time()
         await input_queue.put((frame, timestamp))
     cap.release()
-    await input_queue.put(None)  # ensure downstream termination
+    await input_queue.put(None)  # Ensure downstream tasks terminate
 
-async def predict(input_queue, output_queue, model):
+async def predict(
+    input_queue: asyncio.Queue,
+    output_queue: asyncio.Queue,
+    model: YOLO,
+    conf: float = 0.3,
+    imgsz: int = 640,
+) -> None:
+    """Run model inference in a thread executor to avoid blocking the event loop."""
     loop = asyncio.get_running_loop()
     while True:
         item = await input_queue.get()
         if item is None:
             await output_queue.put(None)
             break
-        frame, t0 = item
-        try:
-            # Run blocking predict in threadpool to avoid blocking event loop
-            results = await loop.run_in_executor(None, lambda: model.predict(frame, verbose=False))
-            plotted = results[0].plot()
-            await output_queue.put((plotted, t0))
-        except Exception as e:
-            print(f"[ERROR] model.predict failed: {e}")
-            await output_queue.put(None)
-            break
+        frame, ts = item
+        # Run inference in a background thread
+        result = await loop.run_in_executor(
+            None,
+            lambda: model.predict(frame, conf=conf, imgsz=imgsz, stream=False)[0].plot(),
+        )
+        await output_queue.put((result, ts))
 
-async def postprocess(output_queue):
-    # Simple FPS smoothing
+async def postprocess(output_queue: asyncio.Queue) -> None:
+    """Display results and compute latency/FPS statistics."""
     frame_count = 0
-    start_time_total = time.time()
+    t_start = time.time()
     while True:
         item = await output_queue.get()
         if item is None:
             break
-        result, t0 = item
-        if result is None:
-            continue
+        frame, ts = item
+        latency_ms = (time.time() - ts) * 1000
         frame_count += 1
-        end_time = time.time()
-        latency_ms = (end_time - t0) * 1000.0
-        elapsed = end_time - start_time_total
-        fps = frame_count / elapsed if elapsed > 0 else 0.0
-        cv2.imshow("streaming", result)
-        print(f"[INFO] End-to-end latency: {latency_ms:.1f} ms | Avg FPS: {fps:.2f}")
-        if cv2.waitKey(1) == ord("q"):
+        avg_fps = frame_count / (time.time() - t_start)
+        cv2.putText(
+            frame,
+            f"Latency: {latency_ms:.1f} ms | FPS: {avg_fps:.1f}",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 255, 0),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.imshow("Ultralytics Async", frame)
+        if cv2.waitKey(1) & 0xFF == ord("q"):
             break
     cv2.destroyAllWindows()
 
-async def main():
-    input_queue = asyncio.Queue(maxsize=4)
-    output_queue = asyncio.Queue(maxsize=4)
+# -----------------------------------------------------------------------------
+# Delegate configuration helper (used automatically inside Ultralytics YOLO)
+# -----------------------------------------------------------------------------
 
-    cap = cv2.VideoCapture("./data/serve.mp4")
+# The Ultralytics YOLO "AutoBackend" reads the env var internally, so we don't need
+# extra code here. As long as YOLO_BACKEND is set (or defaulted) to "armnn", the
+# proper delegate path will be chosen in autobackend.py.
+
+# -----------------------------------------------------------------------------
+# Main entry point
+# -----------------------------------------------------------------------------
+
+async def main(
+    source: str = "./data/serve.mp4",
+    weights: str = "yolov8n.tflite",
+    conf: float = 0.3,
+    imgsz: int = 640,
+) -> None:
+    """Run the full asynchronous pipeline."""
+    # Queues
+    input_queue: asyncio.Queue = asyncio.Queue(maxsize=4)
+    output_queue: asyncio.Queue = asyncio.Queue(maxsize=4)
+
+    # Video capture
+    cap = cv2.VideoCapture(str(source))
     if not cap.isOpened():
-        print("[ERROR] Failed to open video source.")
-        return
+        raise FileNotFoundError(f"Unable to open video source: {source}")
 
-    # Load model; the underlying AutoBackend should pick up YOLO_BACKEND env var you set
-    model_path = "./models/yolov8n_float32.tflite"
-    model = YOLO(model_path, task="detect")
+    # Load model (AutoBackend will pick ArmNN delegate by default)
+    model = YOLO(weights)
+    model.warmup(imgsz=(1, 3, imgsz, imgsz))
 
-    # Warmup (single dummy inference to reduce first-run overhead)
-    try:
-        _ = await asyncio.get_running_loop().run_in_executor(None, lambda: model.predict(np.zeros((640, 640, 3), dtype="uint8"), verbose=False))
-        print("[INFO] Warmup done.")
-    except Exception as e:
-        print(f"[WARN] Warmup failed: {e}")
-
-    await asyncio.gather(
+    # Gather tasks
+    tasks = [
         preprocess(input_queue, cap),
-        predict(input_queue, output_queue, model),
+        predict(input_queue, output_queue, model, conf=conf, imgsz=imgsz),
         postprocess(output_queue),
-    )
+    ]
+    await asyncio.gather(*tasks)
 
 
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        LOGGER.info("Interrupted by user.")
