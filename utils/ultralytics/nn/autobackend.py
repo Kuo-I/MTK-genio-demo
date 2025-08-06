@@ -475,13 +475,20 @@ class AutoBackend(nn.Module):
                     LOGGER.warning(f"NeuronRT interpreter load failed → {e}")
             
             elif backend_choice == "armnn" or backend_choice == "gpu":
-                # Try ArmNN delegate
+                interpreter = None
+                # 1) 先試 ArmNN
                 try:
+                    lib = os.getenv(
+                        "YOLO_ARMNN_LIB",
+                        "/home/ubuntu/armnn/ArmNN-linux-aarch64/"
+                        "libarmnnDelegate.so"
+                    )
                     armnn_delegate = load_delegate(
-                        library=("/home/ubuntu/armnn/ArmNN-linux-aarch64/"
-                                 "libarmnnDelegate.so"),
-                        options={"backends": armnn_backend,
-                                 "logging-severity": "info"}
+                        library=lib,
+                        options={
+                            "backends": armnn_backend,
+                            "logging-severity": "info"
+                        }
                     )
                     interpreter = Interpreter(
                         model_path=w,
@@ -489,7 +496,27 @@ class AutoBackend(nn.Module):
                     )
                     LOGGER.info(f"Using ArmNN delegate ({armnn_backend})")
                 except Exception as e:
-                    LOGGER.warning(f"ArmNN delegate load failed → {e}")
+                    LOGGER.warning(f"ArmNN delegate failed ({e})")
+                # 2) 落不到 ArmNN 再試 TFLite GPU delegate
+                if interpreter is None:
+                    try:
+                        gpu_delegate = load_delegate(
+                            "libtensorflowlite_gpu_delegate.so"
+                        )
+                        interpreter = Interpreter(
+                            model_path=w,
+                            experimental_delegates=[gpu_delegate]
+                        )
+                        LOGGER.info("Using TFLite GPU delegate")
+                    except Exception as e:
+                        LOGGER.warning(
+                            f"TFLite GPU delegate failed ({e}), "
+                            "falling back to CPU"
+                        )
+                # 3) 最後 fallback 回 CPU
+                if interpreter is None:
+                    interpreter = Interpreter(model_path=w)
+                    LOGGER.info("Using TFLite CPU interpreter")
             
             # Fallback logic if primary backend failed
             if interpreter is None:

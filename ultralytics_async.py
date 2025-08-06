@@ -90,7 +90,7 @@ async def main(source="./data/serve.mp4", weights="./models/yolov8n_float32.tfli
         raise FileNotFoundError(f"Unable to open {source}")
 
     q_in, q_out = asyncio.Queue(4), asyncio.Queue(4)
-    model = YOLO(weights)   # AutoBackend 依環境變數載入 delegate
+    model = YOLO(weights, task="detect")   # AutoBackend 依環境變數載入 delegate
 
     try:
         model.predict(np.zeros((imgsz, imgsz, 3), dtype=np.uint8), verbose=False)
